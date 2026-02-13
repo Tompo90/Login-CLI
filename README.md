@@ -72,7 +72,7 @@ python -m pytest -v
 
 ## Security Notes
 
-- Passwords are never stored in plain text.
+- New passwords are stored as PBKDF2 hashes with salt (legacy plaintext records may exist temporarily until migrated).
 - Password prompts use hidden input in both Windows and fallback terminals.
 - Password comparison uses `hmac.compare_digest`.
 - Iteration count is validated to avoid malformed hash records.

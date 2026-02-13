@@ -57,6 +57,39 @@ def _rebuild_profiles_with_fk(conn):
     conn.execute("DROP TABLE profiles_old")
 
 
+def _rebuild_users_with_required_columns(conn, existing_columns):
+    salt_expr = "salt" if "salt" in existing_columns else "NULL"
+    hash_expr = "password_hash" if "password_hash" in existing_columns else "NULL"
+    iterations_expr = "iterations" if "iterations" in existing_columns else "NULL"
+    legacy_expr = "legacy_password" if "legacy_password" in existing_columns else "NULL"
+
+    conn.execute("ALTER TABLE users RENAME TO users_old")
+    conn.execute(
+        """
+        CREATE TABLE users (
+            username TEXT PRIMARY KEY,
+            salt TEXT,
+            password_hash TEXT,
+            iterations INTEGER CHECK (iterations IS NULL OR iterations > 0),
+            legacy_password TEXT,
+            CHECK (
+                (salt IS NOT NULL AND password_hash IS NOT NULL)
+                OR legacy_password IS NOT NULL
+            )
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        INSERT INTO users (username, salt, password_hash, iterations, legacy_password)
+        SELECT username, {salt_expr}, {hash_expr}, {iterations_expr}, {legacy_expr}
+        FROM users_old
+        WHERE (({salt_expr} IS NOT NULL AND {hash_expr} IS NOT NULL) OR {legacy_expr} IS NOT NULL)
+        """
+    )
+    conn.execute("DROP TABLE users_old")
+
+
 def init_db(db_file=DEFAULT_DB_FILE):
     """Create database schema and apply lightweight migrations."""
     try:
@@ -92,6 +125,9 @@ def init_db(db_file=DEFAULT_DB_FILE):
                 """
             )
             users_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "salt" not in users_columns or "password_hash" not in users_columns:
+                _rebuild_users_with_required_columns(conn, users_columns)
+                users_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
             if "iterations" not in users_columns:
                 conn.execute("ALTER TABLE users ADD COLUMN iterations INTEGER")
             if "legacy_password" not in users_columns:

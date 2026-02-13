@@ -423,6 +423,21 @@ class IntegrationDbTests(unittest.TestCase):
 
         self.assertEqual(profiles, {})
 
+    def test_init_storage_migrates_legacy_users_schema(self):
+        import sqlite3
+
+        conn = sqlite3.connect(self.db_file)
+        conn.execute("CREATE TABLE users (username TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE profiles (username TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        with patch.object(app, "DB_FILE", self.db_file):
+            app.init_storage()
+            users = app.load_users()
+
+        self.assertEqual(users, {})
+
 
 if __name__ == "__main__":
     unittest.main()
