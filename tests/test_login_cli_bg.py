@@ -99,7 +99,7 @@ class AuthFlowTests(unittest.TestCase):
         profiles = {}
 
         with patch.object(
-            app, "read_non_empty", side_effect=["NewUser", "USA", "Boston"]
+            app, "read_non_empty", side_effect=["NewUser", "Tom", "Popov", "USA", "Boston"]
         ), patch.object(app, "read_new_password", return_value="StrongPass1!"), patch.object(
             app, "read_email", return_value="new@example.com"
         ), patch.object(
@@ -115,11 +115,15 @@ class AuthFlowTests(unittest.TestCase):
 
         self.assertIn("NewUser", users)
         self.assertIn("NewUser", profiles)
+        self.assertEqual(profiles["NewUser"]["name"], "Tom")
+        self.assertEqual(profiles["NewUser"]["surname"], "Popov")
         self.assertEqual(profiles["NewUser"]["email"], "new@example.com")
 
     def test_edit_profile_updates_selected_fields(self):
         profiles = {
             "SampleUser90": {
+                "name": "OldName",
+                "surname": "OldSurname",
                 "email": "old@example.com",
                 "country": "Exampleland",
                 "city": "Sample City",
@@ -132,6 +136,8 @@ class AuthFlowTests(unittest.TestCase):
             app,
             "read_text",
             side_effect=[
+                "NewName",
+                "",
                 "new@example.com",
                 "",
                 "Demo City",
@@ -141,6 +147,8 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(app, "save_profiles", return_value=None):
             app.edit_profile("SampleUser90", profiles)
 
+        self.assertEqual(profiles["SampleUser90"]["name"], "NewName")
+        self.assertEqual(profiles["SampleUser90"]["surname"], "OldSurname")
         self.assertEqual(profiles["SampleUser90"]["email"], "new@example.com")
         self.assertEqual(profiles["SampleUser90"]["country"], "Exampleland")
         self.assertEqual(profiles["SampleUser90"]["city"], "Demo City")
@@ -150,6 +158,8 @@ class AuthFlowTests(unittest.TestCase):
     def test_edit_profile_rejects_invalid_email(self):
         profiles = {
             "SampleUser90": {
+                "name": "OldName",
+                "surname": "OldSurname",
                 "email": "old@example.com",
                 "country": "Exampleland",
                 "city": "Sample City",
@@ -158,7 +168,7 @@ class AuthFlowTests(unittest.TestCase):
             }
         }
 
-        with patch.object(app, "read_text", side_effect=["bad-email"]), patch.object(
+        with patch.object(app, "read_text", side_effect=["", "", "bad-email"]), patch.object(
             app, "save_profiles", return_value=None
         ) as save_mock:
             app.edit_profile("SampleUser90", profiles)
@@ -169,6 +179,8 @@ class AuthFlowTests(unittest.TestCase):
     def test_edit_profile_rejects_late_invalid_input_without_partial_changes(self):
         profiles = {
             "SampleUser90": {
+                "name": "OldName",
+                "surname": "OldSurname",
                 "email": "old@example.com",
                 "country": "Exampleland",
                 "city": "Sample City",
@@ -182,6 +194,8 @@ class AuthFlowTests(unittest.TestCase):
             app,
             "read_text",
             side_effect=[
+                "NewName",
+                "NewSurname",
                 "new@example.com",
                 "NewCountry",
                 "NewCity",
@@ -242,7 +256,7 @@ class AuthFlowTests(unittest.TestCase):
         profiles = {}
 
         with patch.object(
-            app, "read_non_empty", side_effect=["NewUser", "USA", "Boston"]
+            app, "read_non_empty", side_effect=["NewUser", "Tom", "Popov", "USA", "Boston"]
         ), patch.object(app, "read_new_password", return_value="StrongPass1!"), patch.object(
             app, "read_email", return_value="new@example.com"
         ), patch.object(

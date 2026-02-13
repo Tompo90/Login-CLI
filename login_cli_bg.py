@@ -104,6 +104,8 @@ def init_db():
                 """
                 CREATE TABLE IF NOT EXISTS profiles (
                     username TEXT PRIMARY KEY,
+                    name TEXT,
+                    surname TEXT,
                     email TEXT,
                     country TEXT,
                     city TEXT,
@@ -112,6 +114,13 @@ def init_db():
                 )
                 """
             )
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
+            }
+            if "name" not in existing_columns:
+                conn.execute("ALTER TABLE profiles ADD COLUMN name TEXT")
+            if "surname" not in existing_columns:
+                conn.execute("ALTER TABLE profiles ADD COLUMN surname TEXT")
             conn.commit()
     except sqlite3.Error as error:
         raise DataFileError(f"Could not initialize database '{DB_FILE.name}': {error}") from error
@@ -201,20 +210,22 @@ def load_profiles():
     try:
         with db_connect() as conn:
             rows = conn.execute(
-                "SELECT username, email, country, city, gender, birth_date FROM profiles"
+                "SELECT username, name, surname, email, country, city, gender, birth_date FROM profiles"
             ).fetchall()
     except sqlite3.Error as error:
         raise DataFileError(f"Could not load profiles from '{DB_FILE.name}': {error}") from error
 
     return {
         username: {
+            "name": name,
+            "surname": surname,
             "email": email,
             "country": country,
             "city": city,
             "gender": gender,
             "birth_date": birth_date,
         }
-        for username, email, country, city, gender, birth_date in rows
+        for username, name, surname, email, country, city, gender, birth_date in rows
     }
 
 
@@ -230,6 +241,8 @@ def save_profiles(profiles):
         rows.append(
             (
                 username,
+                profile.get("name"),
+                profile.get("surname"),
                 profile.get("email"),
                 profile.get("country"),
                 profile.get("city"),
@@ -243,8 +256,8 @@ def save_profiles(profiles):
             conn.execute("DELETE FROM profiles")
             conn.executemany(
                 """
-                INSERT INTO profiles (username, email, country, city, gender, birth_date)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO profiles (username, name, surname, email, country, city, gender, birth_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -507,6 +520,8 @@ def register_user(users, profiles):
             return
 
         password = read_new_password()
+        name = read_non_empty("Enter name: ")
+        surname = read_non_empty("Enter surname: ")
         email = read_email("Enter email: ")
         country = read_non_empty("Enter country: ")
         city = read_non_empty("Enter city: ")
@@ -515,6 +530,8 @@ def register_user(users, profiles):
 
         user_record = hash_password(password)
         profile_record = {
+            "name": name,
+            "surname": surname,
             "email": email,
             "country": country,
             "city": city,
@@ -582,6 +599,8 @@ def show_profile(username, profiles):
         return
 
     print(f"\nUsername: {username}")
+    print(f"Name: {profile.get('name', '-')}")
+    print(f"Surname: {profile.get('surname', '-')}")
     print(f"Email: {profile.get('email', '-')}")
     print(f"Country: {profile.get('country', '-')}")
     print(f"City: {profile.get('city', '-')}")
@@ -605,6 +624,14 @@ def edit_profile(username, profiles):
 
     try:
         updated_profile = profile.copy()
+
+        name = read_text(f"Name [{profile.get('name', '')}]: ")
+        if name:
+            updated_profile["name"] = name
+
+        surname = read_text(f"Surname [{profile.get('surname', '')}]: ")
+        if surname:
+            updated_profile["surname"] = surname
 
         email = read_text(f"Email [{profile.get('email', '')}]: ")
         if email:

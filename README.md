@@ -65,7 +65,7 @@ python -m pytest -v
   - `password_hash` (hex)
   - `iterations` (PBKDF2 rounds)
   - `profiles` table:
-  - `email`, `country`, `city`, `gender`, `birth_date`
+  - `name`, `surname`, `email`, `country`, `city`, `gender`, `birth_date`
 
 ## Security Notes
 
