@@ -23,6 +23,8 @@ A simple, secure command-line login and profile management application built wit
 ```text
 .
 |- login_cli_bg.py              # Main application
+|- security.py                  # Password hashing/verification helpers
+|- validation.py                # Input validation helpers
 |- database.py                  # SQLite data access layer
 |- app.db                       # SQLite database (users + profiles)
 |- users.json                   # Optional legacy import source
@@ -57,7 +59,11 @@ python login_cli_bg.py
 ## Run Tests
 
 ```powershell
+# If activated:
 python -m pytest -v
+
+# Without activating .venv:
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
 ## How Data Is Stored

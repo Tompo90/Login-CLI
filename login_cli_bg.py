@@ -1,16 +1,12 @@
-import binascii
-import datetime
 import getpass
-import hashlib
-import hmac
 import logging
-import os
-import re
 import sys
 import time
 from pathlib import Path
 
 import database
+import security
+import validation
 
 try:
     import msvcrt
@@ -94,68 +90,69 @@ def maybe_migrate_json_data():
 
 def save_user(username, user_record):
     """Persist one user record."""
-    database.upsert_user(username, user_record, DB_FILE)
+    try:
+        database.upsert_user(username, user_record, DB_FILE)
+    except database.DataStoreError as error:
+        raise DataFileError(str(error)) from error
 
 
 def delete_user(username):
     """Delete one user record."""
-    database.delete_user(username, DB_FILE)
+    try:
+        database.delete_user(username, DB_FILE)
+    except database.DataStoreError as error:
+        raise DataFileError(str(error)) from error
 
 
 def save_profile(username, profile_record):
     """Persist one profile record."""
-    database.upsert_profile(username, profile_record, DB_FILE)
+    try:
+        database.upsert_profile(username, profile_record, DB_FILE)
+    except database.DataStoreError as error:
+        raise DataFileError(str(error)) from error
 
 
 def save_account(username, user_record, profile_record):
     """Persist user and profile atomically."""
-    database.upsert_user_and_profile(username, user_record, profile_record, DB_FILE)
+    try:
+        database.upsert_user_and_profile(username, user_record, profile_record, DB_FILE)
+    except database.DataStoreError as error:
+        raise DataFileError(str(error)) from error
 
 
 def delete_profile(username):
     """Delete one profile record."""
-    database.delete_profile(username, DB_FILE)
+    try:
+        database.delete_profile(username, DB_FILE)
+    except database.DataStoreError as error:
+        raise DataFileError(str(error)) from error
 
 
 def hash_password(password, iterations=DEFAULT_ITERATIONS):
     """Return salt + password hash for secure storage."""
-    if not isinstance(iterations, int) or not (MIN_ITERATIONS <= iterations <= MAX_ITERATIONS):
-        raise ValueError("Invalid PBKDF2 iteration count.")
-
-    salt = os.urandom(16)
-    password_hash = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, iterations
+    return security.hash_password_record(
+        password,
+        iterations=iterations,
+        min_iterations=MIN_ITERATIONS,
+        max_iterations=MAX_ITERATIONS,
     )
-    return {
-        "salt": binascii.hexlify(salt).decode("utf-8"),
-        "password_hash": binascii.hexlify(password_hash).decode("utf-8"),
-        "iterations": iterations,
-    }
 
 
 def verify_password(password, salt_hex, stored_hash_hex, iterations=LEGACY_ITERATIONS):
     """Check whether an entered password matches the stored hash."""
-    try:
-        if not isinstance(password, str):
-            return False
-        if not isinstance(salt_hex, str) or not isinstance(stored_hash_hex, str):
-            return False
-        if not isinstance(iterations, int):
-            return False
-        if not (MIN_ITERATIONS <= iterations <= MAX_ITERATIONS):
-            return False
-        salt = binascii.unhexlify(salt_hex.encode("utf-8"))
-        stored_hash = binascii.unhexlify(stored_hash_hex.encode("utf-8"))
-    except (AttributeError, ValueError, TypeError, binascii.Error):
-        return False
-
-    entered_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return hmac.compare_digest(entered_hash, stored_hash)
+    return security.verify_password_hash(
+        password,
+        salt_hex,
+        stored_hash_hex,
+        iterations=iterations,
+        min_iterations=MIN_ITERATIONS,
+        max_iterations=MAX_ITERATIONS,
+    )
 
 
 def normalize_username(username):
     """Return normalized username for comparisons."""
-    return username.strip().casefold()
+    return validation.normalize_username(username)
 
 
 def find_existing_username(users, entered_username):
@@ -172,6 +169,7 @@ def find_existing_username(users, entered_username):
         return entered_username, False
 
     target = normalize_username(entered_username)
+    # We allow case-insensitive lookup for convenience, but only if it resolves uniquely.
     matches = [
         existing_username
         for existing_username in users
@@ -232,7 +230,7 @@ def read_non_empty(prompt):
 
 def is_valid_email(email):
     """Basic email format validation."""
-    return bool(re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", email))
+    return validation.is_valid_email(email)
 
 
 def read_email(prompt):
@@ -255,13 +253,7 @@ def read_gender(prompt):
 
 def is_valid_birth_date(value):
     """Validate birth date format and range."""
-    try:
-        birth_date = datetime.datetime.strptime(value, "%Y-%m-%d").date()
-    except ValueError:
-        return False
-
-    today = datetime.date.today()
-    return datetime.date(1900, 1, 1) <= birth_date <= today
+    return validation.is_valid_birth_date(value)
 
 
 def read_birth_date(prompt):
@@ -275,18 +267,7 @@ def read_birth_date(prompt):
 
 def password_strength_errors(password):
     """Return a list of unmet password rules."""
-    errors = []
-    if len(password) < 8:
-        errors.append("at least 8 characters")
-    if not re.search(r"[A-Z]", password):
-        errors.append("one uppercase letter")
-    if not re.search(r"[a-z]", password):
-        errors.append("one lowercase letter")
-    if not re.search(r"[0-9]", password):
-        errors.append("one number")
-    if not re.search(r"[^A-Za-z0-9]", password):
-        errors.append("one symbol")
-    return errors
+    return validation.password_strength_errors(password)
 
 
 def read_new_password():
@@ -332,6 +313,7 @@ def authenticate_user(users):
         logger.error("Invalid account record encountered for username '%s'.", username)
         return None
 
+    # Preferred modern record format: salted PBKDF2 hash.
     if "salt" in user_record and "password_hash" in user_record:
         iterations = user_record.get("iterations", LEGACY_ITERATIONS)
         if verify_password(
@@ -346,12 +328,12 @@ def authenticate_user(users):
         logger.info("Failed login attempt for existing username '%s'.", username)
         return None
 
-    # Backward compatibility: migrate old plain-text password records after first successful login.
+    # Backward compatibility: migrate old plain-text records after first successful login.
     if "password" in user_record and user_record["password"] == password:
         users[username] = hash_password(password)
         try:
             save_user(username, users[username])
-        except OSError:
+        except DataFileError:
             # Keep the old record in memory if migration cannot be persisted.
             users[username] = user_record
             print("Login failed: could not update account data. Please try again later.")
@@ -389,6 +371,7 @@ def register_user(users, profiles):
         gender = read_gender("Enter gender (male/female): ")
         birth_date = read_birth_date("Enter birth date (YYYY-MM-DD): ")
 
+        # Build records in memory first, then persist once.
         user_record = hash_password(password)
         profile_record = {
             "name": name,
@@ -404,8 +387,8 @@ def register_user(users, profiles):
         profiles[username] = profile_record
         try:
             save_account(username, user_record, profile_record)
-        except OSError:
-            # Roll back in-memory state; DB write is atomic and rolls back on failure.
+        except DataFileError:
+            # Keep in-memory state aligned with DB state if persistence fails.
             users.pop(username, None)
             profiles.pop(username, None)
             print("Registration failed while saving data. No account was created.")
@@ -433,6 +416,7 @@ def login_user(users, profiles):
                 print("Too many failed login attempts. Returning to main menu.")
                 return
 
+            # Exponential backoff slows brute-force retries without locking the app forever.
             wait_seconds = LOGIN_BACKOFF_SECONDS[min(attempt - 1, len(LOGIN_BACKOFF_SECONDS) - 1)]
             print(f"Please wait {wait_seconds} second(s) before trying again.")
             time.sleep(wait_seconds)
@@ -475,6 +459,7 @@ def edit_profile(username, profiles):
     print("Tip: type 'exit' (or 'quit'/'q') to cancel editing.")
 
     try:
+        # Work on a copy to avoid partial updates when validation fails midway.
         updated_profile = profile.copy()
 
         name = read_text(f"Name [{profile.get('name', '')}]: ")
@@ -520,7 +505,7 @@ def edit_profile(username, profiles):
         profiles[username] = updated_profile
         try:
             save_profile(username, updated_profile)
-        except OSError:
+        except DataFileError:
             profiles[username] = profile
             print("Could not save profile changes. Please try again.")
             logger.exception("Failed to save profile updates for '%s'.", username)
@@ -563,6 +548,10 @@ def main():
     )
     configure_console()
     try:
+        # Startup order matters:
+        # 1) ensure schema exists
+        # 2) import legacy JSON once (if DB is empty)
+        # 3) load in-memory working sets
         init_storage()
         maybe_migrate_json_data()
         users = load_users()

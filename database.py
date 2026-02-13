@@ -299,7 +299,7 @@ def load_profiles(db_file=DEFAULT_DB_FILE):
 
 def upsert_user(username, user_record, db_file=DEFAULT_DB_FILE):
     if not isinstance(user_record, dict):
-        raise OSError("Could not save user: invalid account record.")
+        raise DataStoreError("Could not save user: invalid account record.")
 
     try:
         with _connect(db_file) as conn:
@@ -323,7 +323,9 @@ def upsert_user(username, user_record, db_file=DEFAULT_DB_FILE):
             )
             conn.commit()
     except sqlite3.Error as error:
-        raise OSError(f"Could not save user to '{Path(db_file).name}': {error}") from error
+        raise DataStoreError(
+            f"Could not save user to '{Path(db_file).name}': {error}"
+        ) from error
 
 
 def delete_user(username, db_file=DEFAULT_DB_FILE):
@@ -332,12 +334,14 @@ def delete_user(username, db_file=DEFAULT_DB_FILE):
             conn.execute("DELETE FROM users WHERE username = ?", (username,))
             conn.commit()
     except sqlite3.Error as error:
-        raise OSError(f"Could not delete user from '{Path(db_file).name}': {error}") from error
+        raise DataStoreError(
+            f"Could not delete user from '{Path(db_file).name}': {error}"
+        ) from error
 
 
 def upsert_profile(username, profile_record, db_file=DEFAULT_DB_FILE):
     if not isinstance(profile_record, dict):
-        raise OSError("Could not save profile: invalid profile record.")
+        raise DataStoreError("Could not save profile: invalid profile record.")
 
     try:
         with _connect(db_file) as conn:
@@ -368,16 +372,16 @@ def upsert_profile(username, profile_record, db_file=DEFAULT_DB_FILE):
             )
             conn.commit()
     except sqlite3.Error as error:
-        raise OSError(
+        raise DataStoreError(
             f"Could not save profile to '{Path(db_file).name}': {error}"
         ) from error
 
 
 def upsert_user_and_profile(username, user_record, profile_record, db_file=DEFAULT_DB_FILE):
     if not isinstance(user_record, dict):
-        raise OSError("Could not save account: invalid account record.")
+        raise DataStoreError("Could not save account: invalid account record.")
     if not isinstance(profile_record, dict):
-        raise OSError("Could not save account: invalid profile record.")
+        raise DataStoreError("Could not save account: invalid profile record.")
 
     try:
         with _connect(db_file) as conn:
@@ -426,7 +430,9 @@ def upsert_user_and_profile(username, user_record, profile_record, db_file=DEFAU
             )
             conn.commit()
     except sqlite3.Error as error:
-        raise OSError(f"Could not save account to '{Path(db_file).name}': {error}") from error
+        raise DataStoreError(
+            f"Could not save account to '{Path(db_file).name}': {error}"
+        ) from error
 
 
 def delete_profile(username, db_file=DEFAULT_DB_FILE):
@@ -435,6 +441,6 @@ def delete_profile(username, db_file=DEFAULT_DB_FILE):
             conn.execute("DELETE FROM profiles WHERE username = ?", (username,))
             conn.commit()
     except sqlite3.Error as error:
-        raise OSError(
+        raise DataStoreError(
             f"Could not delete profile from '{Path(db_file).name}': {error}"
         ) from error
