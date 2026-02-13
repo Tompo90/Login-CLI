@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Test/cache artifacts
+.pytest_cache/
+.coverage
+
+# Local temp and backup artifacts
+.tmp/
+*.bak.json
