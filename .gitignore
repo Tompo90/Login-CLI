@@ -9,6 +9,7 @@ venv/
 # Test/cache artifacts
 .pytest_cache/
 .coverage
+pytest-cache-files-*/
 
 # Local temp and backup artifacts
 .tmp/
