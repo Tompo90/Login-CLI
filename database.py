@@ -14,9 +14,47 @@ def _connect(db_file):
     try:
         conn = sqlite3.connect(db_file)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
     except sqlite3.Error as error:
         raise DataStoreError(f"Could not open database '{Path(db_file).name}': {error}") from error
+
+
+def _profiles_has_users_fk(conn):
+    rows = conn.execute("PRAGMA foreign_key_list(profiles)").fetchall()
+    for row in rows:
+        # pragma columns: id, seq, table, from, to, on_update, on_delete, match
+        if row[2] == "users" and row[3] == "username" and row[4] == "username":
+            return True
+    return False
+
+
+def _rebuild_profiles_with_fk(conn):
+    conn.execute("ALTER TABLE profiles RENAME TO profiles_old")
+    conn.execute(
+        """
+        CREATE TABLE profiles (
+            username TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            surname TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            country TEXT NOT NULL DEFAULT '',
+            city TEXT NOT NULL DEFAULT '',
+            gender TEXT NOT NULL DEFAULT '',
+            birth_date TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO profiles (username, name, surname, email, country, city, gender, birth_date)
+        SELECT p.username, p.name, p.surname, p.email, p.country, p.city, p.gender, p.birth_date
+        FROM profiles_old p
+        WHERE EXISTS (SELECT 1 FROM users u WHERE u.username = p.username)
+        """
+    )
+    conn.execute("DROP TABLE profiles_old")
 
 
 def init_db(db_file=DEFAULT_DB_FILE):
@@ -48,17 +86,37 @@ def init_db(db_file=DEFAULT_DB_FILE):
                     country TEXT NOT NULL DEFAULT '',
                     city TEXT NOT NULL DEFAULT '',
                     gender TEXT NOT NULL DEFAULT '',
-                    birth_date TEXT NOT NULL DEFAULT ''
+                    birth_date TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
                 )
                 """
             )
+            users_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "iterations" not in users_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN iterations INTEGER")
+            if "legacy_password" not in users_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN legacy_password TEXT")
+
             existing_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
             }
-            if "name" not in existing_columns:
-                conn.execute("ALTER TABLE profiles ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-            if "surname" not in existing_columns:
-                conn.execute("ALTER TABLE profiles ADD COLUMN surname TEXT NOT NULL DEFAULT ''")
+            required_profile_columns = (
+                "name",
+                "surname",
+                "email",
+                "country",
+                "city",
+                "gender",
+                "birth_date",
+            )
+            for column_name in required_profile_columns:
+                if column_name not in existing_columns:
+                    conn.execute(
+                        f"ALTER TABLE profiles ADD COLUMN {column_name} TEXT NOT NULL DEFAULT ''"
+                    )
+
+            if not _profiles_has_users_fk(conn):
+                _rebuild_profiles_with_fk(conn)
             conn.commit()
     except sqlite3.Error as error:
         raise DataStoreError(
@@ -277,6 +335,62 @@ def upsert_profile(username, profile_record, db_file=DEFAULT_DB_FILE):
         raise OSError(
             f"Could not save profile to '{Path(db_file).name}': {error}"
         ) from error
+
+
+def upsert_user_and_profile(username, user_record, profile_record, db_file=DEFAULT_DB_FILE):
+    if not isinstance(user_record, dict):
+        raise OSError("Could not save account: invalid account record.")
+    if not isinstance(profile_record, dict):
+        raise OSError("Could not save account: invalid profile record.")
+
+    try:
+        with _connect(db_file) as conn:
+            conn.execute(
+                """
+                INSERT INTO users (username, salt, password_hash, iterations, legacy_password)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    salt=excluded.salt,
+                    password_hash=excluded.password_hash,
+                    iterations=excluded.iterations,
+                    legacy_password=excluded.legacy_password
+                """,
+                (
+                    username,
+                    user_record.get("salt"),
+                    user_record.get("password_hash"),
+                    user_record.get("iterations"),
+                    user_record.get("password"),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO profiles
+                (username, name, surname, email, country, city, gender, birth_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    name=excluded.name,
+                    surname=excluded.surname,
+                    email=excluded.email,
+                    country=excluded.country,
+                    city=excluded.city,
+                    gender=excluded.gender,
+                    birth_date=excluded.birth_date
+                """,
+                (
+                    username,
+                    profile_record.get("name") or "",
+                    profile_record.get("surname") or "",
+                    profile_record.get("email") or "",
+                    profile_record.get("country") or "",
+                    profile_record.get("city") or "",
+                    profile_record.get("gender") or "",
+                    profile_record.get("birth_date") or "",
+                ),
+            )
+            conn.commit()
+    except sqlite3.Error as error:
+        raise OSError(f"Could not save account to '{Path(db_file).name}': {error}") from error
 
 
 def delete_profile(username, db_file=DEFAULT_DB_FILE):

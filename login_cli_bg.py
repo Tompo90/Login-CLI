@@ -107,6 +107,11 @@ def save_profile(username, profile_record):
     database.upsert_profile(username, profile_record, DB_FILE)
 
 
+def save_account(username, user_record, profile_record):
+    """Persist user and profile atomically."""
+    database.upsert_user_and_profile(username, user_record, profile_record, DB_FILE)
+
+
 def delete_profile(username):
     """Delete one profile record."""
     database.delete_profile(username, DB_FILE)
@@ -131,6 +136,8 @@ def hash_password(password, iterations=DEFAULT_ITERATIONS):
 def verify_password(password, salt_hex, stored_hash_hex, iterations=LEGACY_ITERATIONS):
     """Check whether an entered password matches the stored hash."""
     try:
+        if not isinstance(password, str):
+            return False
         if not isinstance(salt_hex, str) or not isinstance(stored_hash_hex, str):
             return False
         if not isinstance(iterations, int):
@@ -396,23 +403,12 @@ def register_user(users, profiles):
         users[username] = user_record
         profiles[username] = profile_record
         try:
-            save_user(username, user_record)
-            save_profile(username, profile_record)
+            save_account(username, user_record, profile_record)
         except OSError:
-            # Roll back memory and try to restore files to a consistent state.
+            # Roll back in-memory state; DB write is atomic and rolls back on failure.
             users.pop(username, None)
             profiles.pop(username, None)
-            rollback_ok = True
-            try:
-                delete_user(username)
-                delete_profile(username)
-            except OSError:
-                rollback_ok = False
-
-            if rollback_ok:
-                print("Registration failed while saving data. No account was created.")
-            else:
-                print("Registration failed while saving data. Files may be inconsistent.")
+            print("Registration failed while saving data. No account was created.")
             logger.exception("Failed registration persistence for '%s'.", username)
             return
 

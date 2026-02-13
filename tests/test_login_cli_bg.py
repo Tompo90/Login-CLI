@@ -42,6 +42,17 @@ class PasswordTests(unittest.TestCase):
                 value = app.read_password("Password: ")
         self.assertEqual(value, "  SpaceyPass1!  ")
 
+    def test_verify_password_returns_false_for_non_string_password(self):
+        record = app.hash_password("StrongPass1!")
+        self.assertFalse(
+            app.verify_password(
+                None,
+                record["salt"],
+                record["password_hash"],
+                iterations=record["iterations"],
+            )
+        )
+
 
 class AuthFlowTests(unittest.TestCase):
     def test_authenticate_user_accepts_legacy_record_without_iterations(self):
@@ -100,9 +111,7 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(
             app, "read_birth_date", return_value="2000-01-01"
         ), patch.object(
-            app, "save_user", return_value=None
-        ), patch.object(
-            app, "save_profile", return_value=None
+            app, "save_account", return_value=None
         ):
             app.register_user(users, profiles)
 
@@ -244,7 +253,7 @@ class AuthFlowTests(unittest.TestCase):
         menu_mock.assert_called_once_with("Alice", profiles)
         sleep_mock.assert_called_once_with(1)
 
-    def test_register_rolls_back_memory_when_profile_save_fails(self):
+    def test_register_rolls_back_memory_when_atomic_save_fails(self):
         users = {}
         profiles = {}
 
@@ -257,20 +266,12 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(
             app, "read_birth_date", return_value="2000-01-01"
         ), patch.object(
-            app, "save_user", return_value=None
-        ), patch.object(
-            app, "save_profile", side_effect=OSError("disk full")
-        ), patch.object(
-            app, "delete_user", return_value=None
-        ) as delete_user_mock, patch.object(
-            app, "delete_profile", return_value=None
-        ) as delete_profile_mock:
+            app, "save_account", side_effect=OSError("disk full")
+        ):
             app.register_user(users, profiles)
 
         self.assertEqual(users, {})
         self.assertEqual(profiles, {})
-        delete_user_mock.assert_called_once_with("NewUser")
-        delete_profile_mock.assert_called_once_with("NewUser")
 
     def test_main_shows_startup_error_on_invalid_users_json(self):
         unique = uuid.uuid4().hex
@@ -406,6 +407,21 @@ class IntegrationDbTests(unittest.TestCase):
         self.assertIn("salt", db_users["Alice"])
         self.assertIn("password_hash", db_users["Alice"])
         self.assertNotIn("password", db_users["Alice"])
+
+    def test_init_storage_migrates_legacy_profile_schema(self):
+        import sqlite3
+
+        conn = sqlite3.connect(self.db_file)
+        conn.execute("CREATE TABLE users (username TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE profiles (username TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        with patch.object(app, "DB_FILE", self.db_file):
+            app.init_storage()
+            profiles = app.load_profiles()
+
+        self.assertEqual(profiles, {})
 
 
 if __name__ == "__main__":
