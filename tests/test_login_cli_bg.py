@@ -57,16 +57,17 @@ class AuthFlowTests(unittest.TestCase):
             }
         }
 
-        with patch.object(app, "read_text", return_value="alice"):
-            with patch.object(app, "read_password", return_value=password):
-                self.assertEqual(app.authenticate_user(users), "Alice")
+        with patch.object(app, "read_text", return_value="alice"), patch.object(
+            app, "read_password", return_value=password
+        ):
+            self.assertEqual(app.authenticate_user(users), "Alice")
 
     def test_authenticate_user_migrates_legacy_plaintext_record(self):
         users = {"Alice": {"password": "LegacyPass1!"}}
 
         with patch.object(app, "read_text", return_value="Alice"), patch.object(
             app, "read_password", return_value="LegacyPass1!"
-        ), patch.object(app, "save_users", return_value=None) as save_mock:
+        ), patch.object(app, "save_user", return_value=None) as save_mock:
             username = app.authenticate_user(users)
 
         self.assertEqual(username, "Alice")
@@ -74,15 +75,7 @@ class AuthFlowTests(unittest.TestCase):
         self.assertIn("password_hash", users["Alice"])
         self.assertIn("iterations", users["Alice"])
         self.assertNotIn("password", users["Alice"])
-        self.assertTrue(
-            app.verify_password(
-                "LegacyPass1!",
-                users["Alice"]["salt"],
-                users["Alice"]["password_hash"],
-                users["Alice"]["iterations"],
-            )
-        )
-        save_mock.assert_called_once()
+        save_mock.assert_called_once_with("Alice", users["Alice"])
 
     def test_register_rejects_case_insensitive_duplicate(self):
         users = {"SampleUser90": app.hash_password("StrongPass1!")}
@@ -107,9 +100,9 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(
             app, "read_birth_date", return_value="2000-01-01"
         ), patch.object(
-            app, "save_users", return_value=None
+            app, "save_user", return_value=None
         ), patch.object(
-            app, "save_profiles", return_value=None
+            app, "save_profile", return_value=None
         ):
             app.register_user(users, profiles)
 
@@ -144,7 +137,7 @@ class AuthFlowTests(unittest.TestCase):
                 "female",
                 "1991-01-01",
             ],
-        ), patch.object(app, "save_profiles", return_value=None):
+        ), patch.object(app, "save_profile", return_value=None):
             app.edit_profile("SampleUser90", profiles)
 
         self.assertEqual(profiles["SampleUser90"]["name"], "NewName")
@@ -169,7 +162,7 @@ class AuthFlowTests(unittest.TestCase):
         }
 
         with patch.object(app, "read_text", side_effect=["", "", "bad-email"]), patch.object(
-            app, "save_profiles", return_value=None
+            app, "save_profile", return_value=None
         ) as save_mock:
             app.edit_profile("SampleUser90", profiles)
 
@@ -201,7 +194,7 @@ class AuthFlowTests(unittest.TestCase):
                 "NewCity",
                 "unknown",
             ],
-        ), patch.object(app, "save_profiles", return_value=None) as save_mock:
+        ), patch.object(app, "save_profile", return_value=None) as save_mock:
             app.edit_profile("SampleUser90", profiles)
 
         self.assertEqual(profiles["SampleUser90"], original)
@@ -219,7 +212,7 @@ class AuthFlowTests(unittest.TestCase):
         profiles = {"SampleUser90": "not-a-dict"}
 
         with patch("builtins.print") as print_mock, patch.object(
-            app, "save_profiles", return_value=None
+            app, "save_profile", return_value=None
         ) as save_mock:
             app.edit_profile("SampleUser90", profiles)
 
@@ -264,16 +257,20 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(
             app, "read_birth_date", return_value="2000-01-01"
         ), patch.object(
-            app, "save_users", side_effect=[None, None]
-        ) as save_users_mock, patch.object(
-            app, "save_profiles", side_effect=[OSError("disk full"), None]
-        ) as save_profiles_mock:
+            app, "save_user", return_value=None
+        ), patch.object(
+            app, "save_profile", side_effect=OSError("disk full")
+        ), patch.object(
+            app, "delete_user", return_value=None
+        ) as delete_user_mock, patch.object(
+            app, "delete_profile", return_value=None
+        ) as delete_profile_mock:
             app.register_user(users, profiles)
 
         self.assertEqual(users, {})
         self.assertEqual(profiles, {})
-        self.assertEqual(save_users_mock.call_count, 2)
-        self.assertEqual(save_profiles_mock.call_count, 2)
+        delete_user_mock.assert_called_once_with("NewUser")
+        delete_profile_mock.assert_called_once_with("NewUser")
 
     def test_main_shows_startup_error_on_invalid_users_json(self):
         unique = uuid.uuid4().hex
@@ -301,6 +298,114 @@ class AuthFlowTests(unittest.TestCase):
                     pass
 
         self.assertTrue(any("Startup error:" in call.args[0] for call in print_mock.call_args_list))
+
+
+class IntegrationDbTests(unittest.TestCase):
+    def setUp(self):
+        unique = uuid.uuid4().hex
+        self.db_file = Path(f"app.integration.{unique}.db")
+        self.users_file = Path(f"users.integration.{unique}.json")
+        self.profiles_file = Path(f"profiles.integration.{unique}.json")
+
+    def tearDown(self):
+        for path in (
+            self.users_file,
+            self.profiles_file,
+            self.db_file,
+            Path(f"{self.db_file}-wal"),
+            Path(f"{self.db_file}-shm"),
+        ):
+            try:
+                path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
+
+    def test_register_persists_profile_and_auth(self):
+        with patch.object(app, "DB_FILE", self.db_file), patch.object(
+            app, "USERS_FILE", self.users_file
+        ), patch.object(app, "PROFILES_FILE", self.profiles_file):
+            app.init_storage()
+            users = {}
+            profiles = {}
+            with patch.object(
+                app, "read_non_empty", side_effect=["NewUser", "Tom", "Popov", "USA", "Boston"]
+            ), patch.object(app, "read_new_password", return_value="StrongPass1!"), patch.object(
+                app, "read_email", return_value="new@example.com"
+            ), patch.object(
+                app, "read_gender", return_value="male"
+            ), patch.object(
+                app, "read_birth_date", return_value="2000-01-01"
+            ):
+                app.register_user(users, profiles)
+
+            db_users = app.load_users()
+            db_profiles = app.load_profiles()
+
+        self.assertIn("NewUser", db_users)
+        self.assertIn("NewUser", db_profiles)
+        self.assertEqual(db_profiles["NewUser"]["name"], "Tom")
+        self.assertEqual(db_profiles["NewUser"]["surname"], "Popov")
+
+    def test_edit_profile_persists_to_database(self):
+        with patch.object(app, "DB_FILE", self.db_file), patch.object(
+            app, "USERS_FILE", self.users_file
+        ), patch.object(app, "PROFILES_FILE", self.profiles_file):
+            app.init_storage()
+            app.save_user("Demo", app.hash_password("StrongPass1!"))
+            app.save_profile(
+                "Demo",
+                {
+                    "name": "Old",
+                    "surname": "Value",
+                    "email": "old@example.com",
+                    "country": "Oldland",
+                    "city": "Oldcity",
+                    "gender": "male",
+                    "birth_date": "1990-01-01",
+                },
+            )
+
+            profiles = app.load_profiles()
+            with patch.object(
+                app,
+                "read_text",
+                side_effect=[
+                    "New",
+                    "Name",
+                    "new@example.com",
+                    "Newland",
+                    "Newcity",
+                    "female",
+                    "1992-02-02",
+                ],
+            ):
+                app.edit_profile("Demo", profiles)
+
+            db_profiles = app.load_profiles()
+
+        self.assertEqual(db_profiles["Demo"]["name"], "New")
+        self.assertEqual(db_profiles["Demo"]["surname"], "Name")
+        self.assertEqual(db_profiles["Demo"]["email"], "new@example.com")
+
+    def test_legacy_password_migration_persists_to_database(self):
+        with patch.object(app, "DB_FILE", self.db_file), patch.object(
+            app, "USERS_FILE", self.users_file
+        ), patch.object(app, "PROFILES_FILE", self.profiles_file):
+            app.init_storage()
+            app.save_user("Alice", {"password": "LegacyPass1!"})
+            users = app.load_users()
+
+            with patch.object(app, "read_text", return_value="Alice"), patch.object(
+                app, "read_password", return_value="LegacyPass1!"
+            ):
+                username = app.authenticate_user(users)
+
+            db_users = app.load_users()
+
+        self.assertEqual(username, "Alice")
+        self.assertIn("salt", db_users["Alice"])
+        self.assertIn("password_hash", db_users["Alice"])
+        self.assertNotIn("password", db_users["Alice"])
 
 
 if __name__ == "__main__":

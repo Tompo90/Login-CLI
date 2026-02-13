@@ -20,3 +20,4 @@ app.db
 app.db-wal
 app.db-shm
 app.invalid*.db
+app.integration*.db

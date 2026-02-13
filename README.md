@@ -14,6 +14,8 @@ A simple, secure command-line login and profile management application built wit
   - Gender (`male` / `female`)
   - Birth date (`YYYY-MM-DD`, valid range)
 - SQLite database storage (`app.db`)
+- Separated database layer (`database.py`)
+- Targeted per-user/profile SQL writes (no full-table rewrites)
 - Basic automated tests
 
 ## Project Structure
@@ -21,6 +23,7 @@ A simple, secure command-line login and profile management application built wit
 ```text
 .
 |- login_cli_bg.py              # Main application
+|- database.py                  # SQLite data access layer
 |- app.db                       # SQLite database (users + profiles)
 |- users.json                   # Optional legacy import source
 |- profiles.json                # Optional legacy import source
@@ -73,6 +76,12 @@ python -m pytest -v
 - Password prompts use hidden input in both Windows and fallback terminals.
 - Password comparison uses `hmac.compare_digest`.
 - Iteration count is validated to avoid malformed hash records.
+
+## Operations Notes
+
+- Startup initializes/updates DB schema automatically.
+- Legacy `users.json` / `profiles.json` are imported once when DB is empty.
+- App logs key events/errors via Python `logging`.
 
 ## Known Limitations
 
