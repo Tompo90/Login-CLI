@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from pathlib import Path
 
 try:
@@ -76,7 +77,7 @@ def load_json(path):
 def save_json(path, data):
     """Save dict data to JSON file."""
     # Write to a temporary file first to reduce risk of partial/corrupt writes.
-    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     with temp_path.open("w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=2)
     temp_path.replace(path)
@@ -304,7 +305,7 @@ def authenticate_user(users):
         return None
 
     if not username:
-        print("User not found.")
+        print("Invalid username or password.")
         return None
 
     user_record = users[username]
@@ -321,7 +322,7 @@ def authenticate_user(users):
             iterations=iterations,
         ):
             return username
-        print("Wrong password.")
+        print("Invalid username or password.")
         return None
 
     # Backward compatibility: migrate old plain-text password records after first successful login.
@@ -336,7 +337,7 @@ def authenticate_user(users):
             return None
         return username
 
-    print("Wrong password.")
+    print("Invalid username or password.")
     return None
 
 

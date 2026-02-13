@@ -61,6 +61,29 @@ class AuthFlowTests(unittest.TestCase):
             with patch.object(app, "read_password", return_value=password):
                 self.assertEqual(app.authenticate_user(users), "Alice")
 
+    def test_authenticate_user_migrates_legacy_plaintext_record(self):
+        users = {"Alice": {"password": "LegacyPass1!"}}
+
+        with patch.object(app, "read_text", return_value="Alice"), patch.object(
+            app, "read_password", return_value="LegacyPass1!"
+        ), patch.object(app, "save_users", return_value=None) as save_mock:
+            username = app.authenticate_user(users)
+
+        self.assertEqual(username, "Alice")
+        self.assertIn("salt", users["Alice"])
+        self.assertIn("password_hash", users["Alice"])
+        self.assertIn("iterations", users["Alice"])
+        self.assertNotIn("password", users["Alice"])
+        self.assertTrue(
+            app.verify_password(
+                "LegacyPass1!",
+                users["Alice"]["salt"],
+                users["Alice"]["password_hash"],
+                users["Alice"]["iterations"],
+            )
+        )
+        save_mock.assert_called_once()
+
     def test_register_rejects_case_insensitive_duplicate(self):
         users = {"SampleUser90": app.hash_password("StrongPass1!")}
         profiles = {}
