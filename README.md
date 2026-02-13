@@ -14,7 +14,6 @@ A simple, secure command-line login and profile management application built wit
   - Gender (`male` / `female`)
   - Birth date (`YYYY-MM-DD`, valid range)
 - SQLite database storage (`app.db`)
-- Automatic one-time import from legacy JSON files (`users.json`, `profiles.json`)
 - Basic automated tests
 
 ## Project Structure
