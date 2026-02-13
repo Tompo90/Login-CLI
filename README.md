@@ -78,4 +78,4 @@ python -m pytest -v
 
 ## License
 
-Add a license file (for example, MIT) before publishing publicly.
+Free to use
