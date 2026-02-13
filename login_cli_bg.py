@@ -410,9 +410,12 @@ def login_user(users, profiles):
 
 def show_profile(username, profiles):
     """Show profile details for a logged-in user."""
-    profile = profiles.get(username)
-    if not profile:
+    if username not in profiles:
         print("No profile data found for this user.")
+        return
+    profile = profiles[username]
+    if not isinstance(profile, dict):
+        print("Profile data is invalid for this user.")
         return
 
     print(f"\nUsername: {username}")
@@ -425,9 +428,12 @@ def show_profile(username, profiles):
 
 def edit_profile(username, profiles):
     """Edit profile fields for a logged-in user."""
-    profile = profiles.get(username)
-    if not profile:
+    if username not in profiles:
         print("No profile data found for this user.")
+        return
+    profile = profiles[username]
+    if not isinstance(profile, dict):
+        print("Profile data is invalid for this user.")
         return
 
     print("\n--- Edit Profile ---")
@@ -435,20 +441,22 @@ def edit_profile(username, profiles):
     print("Tip: type 'exit' (or 'quit'/'q') to cancel editing.")
 
     try:
+        updated_profile = profile.copy()
+
         email = read_text(f"Email [{profile.get('email', '')}]: ")
         if email:
             if not is_valid_email(email):
                 print("Invalid email format. Example: name@example.com")
                 return
-            profile["email"] = email
+            updated_profile["email"] = email
 
         country = read_text(f"Country [{profile.get('country', '')}]: ")
         if country:
-            profile["country"] = country
+            updated_profile["country"] = country
 
         city = read_text(f"City [{profile.get('city', '')}]: ")
         if city:
-            profile["city"] = city
+            updated_profile["city"] = city
 
         gender = read_text(f"Gender (male/female) [{profile.get('gender', '')}]: ")
         if gender:
@@ -456,7 +464,7 @@ def edit_profile(username, profiles):
             if normalized_gender not in ("male", "female"):
                 print("Please enter 'male' or 'female'.")
                 return
-            profile["gender"] = normalized_gender
+            updated_profile["gender"] = normalized_gender
 
         birth_date = read_text(
             f"Birth date (YYYY-MM-DD) [{profile.get('birth_date', '')}]: "
@@ -465,14 +473,18 @@ def edit_profile(username, profiles):
             if not is_valid_birth_date(birth_date):
                 print("Invalid date. Use YYYY-MM-DD between 1900-01-01 and today.")
                 return
-            profile["birth_date"] = birth_date
+            updated_profile["birth_date"] = birth_date
 
-        save_profiles(profiles)
+        profiles[username] = updated_profile
+        try:
+            save_profiles(profiles)
+        except OSError:
+            profiles[username] = profile
+            print("Could not save profile changes. Please try again.")
+            return
         print("Profile updated successfully.")
     except CancelOperation:
         print("Profile editing canceled.")
-    except OSError:
-        print("Could not save profile changes. Please try again.")
 
 
 def user_session_menu(username, profiles):

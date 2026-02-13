@@ -141,6 +141,52 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(profiles["SampleUser90"]["email"], "old@example.com")
         save_mock.assert_not_called()
 
+    def test_edit_profile_rejects_late_invalid_input_without_partial_changes(self):
+        profiles = {
+            "SampleUser90": {
+                "email": "old@example.com",
+                "country": "Exampleland",
+                "city": "Sample City",
+                "gender": "male",
+                "birth_date": "1990-06-12",
+            }
+        }
+        original = profiles["SampleUser90"].copy()
+
+        with patch.object(
+            app,
+            "read_text",
+            side_effect=[
+                "new@example.com",
+                "NewCountry",
+                "NewCity",
+                "unknown",
+            ],
+        ), patch.object(app, "save_profiles", return_value=None) as save_mock:
+            app.edit_profile("SampleUser90", profiles)
+
+        self.assertEqual(profiles["SampleUser90"], original)
+        save_mock.assert_not_called()
+
+    def test_show_profile_handles_invalid_profile_record(self):
+        profiles = {"SampleUser90": "not-a-dict"}
+
+        with patch("builtins.print") as print_mock:
+            app.show_profile("SampleUser90", profiles)
+
+        print_mock.assert_any_call("Profile data is invalid for this user.")
+
+    def test_edit_profile_handles_invalid_profile_record(self):
+        profiles = {"SampleUser90": "not-a-dict"}
+
+        with patch("builtins.print") as print_mock, patch.object(
+            app, "save_profiles", return_value=None
+        ) as save_mock:
+            app.edit_profile("SampleUser90", profiles)
+
+        print_mock.assert_any_call("Profile data is invalid for this user.")
+        save_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
