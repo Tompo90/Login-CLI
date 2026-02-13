@@ -88,6 +88,17 @@ class AuthFlowTests(unittest.TestCase):
         self.assertNotIn("password", users["Alice"])
         save_mock.assert_called_once_with("Alice", users["Alice"])
 
+    def test_authenticate_user_keeps_legacy_record_when_migration_save_fails(self):
+        users = {"Alice": {"password": "LegacyPass1!"}}
+
+        with patch.object(app, "read_text", return_value="Alice"), patch.object(
+            app, "read_password", return_value="LegacyPass1!"
+        ), patch.object(app, "save_user", side_effect=app.DataFileError("db locked")):
+            username = app.authenticate_user(users)
+
+        self.assertIsNone(username)
+        self.assertEqual(users["Alice"], {"password": "LegacyPass1!"})
+
     def test_register_rejects_case_insensitive_duplicate(self):
         users = {"SampleUser90": app.hash_password("StrongPass1!")}
         profiles = {}
@@ -266,12 +277,43 @@ class AuthFlowTests(unittest.TestCase):
         ), patch.object(
             app, "read_birth_date", return_value="2000-01-01"
         ), patch.object(
-            app, "save_account", side_effect=OSError("disk full")
+            app, "save_account", side_effect=app.DataFileError("disk full")
         ):
             app.register_user(users, profiles)
 
         self.assertEqual(users, {})
         self.assertEqual(profiles, {})
+
+    def test_edit_profile_restores_original_when_save_fails(self):
+        profiles = {
+            "SampleUser90": {
+                "name": "OldName",
+                "surname": "OldSurname",
+                "email": "old@example.com",
+                "country": "Exampleland",
+                "city": "Sample City",
+                "gender": "male",
+                "birth_date": "1990-06-12",
+            }
+        }
+        original = profiles["SampleUser90"].copy()
+
+        with patch.object(
+            app,
+            "read_text",
+            side_effect=[
+                "NewName",
+                "",
+                "new@example.com",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ), patch.object(app, "save_profile", side_effect=app.DataFileError("write failed")):
+            app.edit_profile("SampleUser90", profiles)
+
+        self.assertEqual(profiles["SampleUser90"], original)
 
     def test_main_shows_startup_error_on_invalid_users_json(self):
         unique = uuid.uuid4().hex
