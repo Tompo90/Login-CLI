@@ -67,7 +67,6 @@ python -m pytest -v
   - `iterations` (PBKDF2 rounds)
   - `profiles` table:
   - `email`, `country`, `city`, `gender`, `birth_date`
-- Legacy `users.json` / `profiles.json` are auto-imported once if the database is empty.
 
 ## Security Notes
 
