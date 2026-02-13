@@ -1,11 +1,13 @@
 import binascii
 import datetime
+import getpass
 import hashlib
 import hmac
 import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -20,6 +22,8 @@ LEGACY_ITERATIONS = 100_000
 MIN_ITERATIONS = 50_000
 MAX_ITERATIONS = 2_000_000
 CANCEL_WORDS = {"exit", "quit", "q"}
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_BACKOFF_SECONDS = (1, 2, 4, 8)
 
 
 class CancelOperation(Exception):
@@ -167,8 +171,8 @@ def find_existing_username(users, entered_username):
 def read_password(prompt):
     """Read password and show '*' for typed characters."""
     if msvcrt is None or not sys.stdin.isatty():
-        # Password input should treat any text literally (including words like "exit").
-        value = input(prompt)
+        # Fallback to getpass so password input is not echoed.
+        value = getpass.getpass(prompt)
         return value
 
     print(prompt, end="", flush=True)
@@ -398,12 +402,20 @@ def login_user(users, profiles):
     """Log in existing user."""
     print("\n--- Login ---")
     try:
-        username = authenticate_user(users)
-        if not username:
-            return
+        for attempt in range(1, MAX_LOGIN_ATTEMPTS + 1):
+            username = authenticate_user(users)
+            if username:
+                print(f"Login successful. Welcome, {username}!")
+                user_session_menu(username, profiles)
+                return
 
-        print(f"Login successful. Welcome, {username}!")
-        user_session_menu(username, profiles)
+            if attempt == MAX_LOGIN_ATTEMPTS:
+                print("Too many failed login attempts. Returning to main menu.")
+                return
+
+            wait_seconds = LOGIN_BACKOFF_SECONDS[min(attempt - 1, len(LOGIN_BACKOFF_SECONDS) - 1)]
+            print(f"Please wait {wait_seconds} second(s) before trying again.")
+            time.sleep(wait_seconds)
     except CancelOperation:
         print("Login canceled. Returning to main menu.")
 

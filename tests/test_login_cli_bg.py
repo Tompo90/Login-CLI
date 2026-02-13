@@ -1,6 +1,8 @@
 import binascii
 import hashlib
 import unittest
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 import login_cli_bg as app
@@ -36,7 +38,7 @@ class PasswordTests(unittest.TestCase):
 
     def test_read_password_preserves_whitespace_in_fallback(self):
         with patch.object(app, "msvcrt", None):
-            with patch("builtins.input", return_value="  SpaceyPass1!  "):
+            with patch("getpass.getpass", return_value="  SpaceyPass1!  "):
                 value = app.read_password("Password: ")
         self.assertEqual(value, "  SpaceyPass1!  ")
 
@@ -186,6 +188,74 @@ class AuthFlowTests(unittest.TestCase):
 
         print_mock.assert_any_call("Profile data is invalid for this user.")
         save_mock.assert_not_called()
+
+    def test_login_user_limits_failed_attempts(self):
+        users = {}
+        profiles = {}
+
+        with patch.object(app, "authenticate_user", side_effect=[None, None, None, None, None]), patch.object(
+            app, "user_session_menu", return_value=None
+        ) as menu_mock, patch.object(app.time, "sleep", return_value=None) as sleep_mock:
+            app.login_user(users, profiles)
+
+        menu_mock.assert_not_called()
+        self.assertEqual(sleep_mock.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [1, 2, 4, 8])
+
+    def test_login_user_succeeds_on_retry(self):
+        users = {}
+        profiles = {"Alice": {}}
+
+        with patch.object(app, "authenticate_user", side_effect=[None, "Alice"]), patch.object(
+            app, "user_session_menu", return_value=None
+        ) as menu_mock, patch.object(app.time, "sleep", return_value=None) as sleep_mock:
+            app.login_user(users, profiles)
+
+        menu_mock.assert_called_once_with("Alice", profiles)
+        sleep_mock.assert_called_once_with(1)
+
+    def test_register_rolls_back_memory_when_profile_save_fails(self):
+        users = {}
+        profiles = {}
+
+        with patch.object(
+            app, "read_non_empty", side_effect=["NewUser", "USA", "Boston"]
+        ), patch.object(app, "read_new_password", return_value="StrongPass1!"), patch.object(
+            app, "read_email", return_value="new@example.com"
+        ), patch.object(
+            app, "read_gender", return_value="male"
+        ), patch.object(
+            app, "read_birth_date", return_value="2000-01-01"
+        ), patch.object(
+            app, "save_users", side_effect=[None, None]
+        ) as save_users_mock, patch.object(
+            app, "save_profiles", side_effect=[OSError("disk full"), None]
+        ) as save_profiles_mock:
+            app.register_user(users, profiles)
+
+        self.assertEqual(users, {})
+        self.assertEqual(profiles, {})
+        self.assertEqual(save_users_mock.call_count, 2)
+        self.assertEqual(save_profiles_mock.call_count, 2)
+
+    def test_main_shows_startup_error_on_invalid_users_json(self):
+        unique = uuid.uuid4().hex
+        users_file = Path(f"users.invalid.{unique}.json")
+        profiles_file = Path(f"profiles.invalid.{unique}.json")
+
+        try:
+            users_file.write_text("{invalid-json", encoding="utf-8")
+            profiles_file.write_text("{}", encoding="utf-8")
+
+            with patch.object(app, "USERS_FILE", users_file), patch.object(
+                app, "PROFILES_FILE", profiles_file
+            ), patch("builtins.print") as print_mock:
+                app.main()
+        finally:
+            users_file.unlink(missing_ok=True)
+            profiles_file.unlink(missing_ok=True)
+
+        self.assertTrue(any("Startup error:" in call.args[0] for call in print_mock.call_args_list))
 
 
 if __name__ == "__main__":
