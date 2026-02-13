@@ -13,7 +13,8 @@ A simple, secure command-line login and profile management application built wit
   - Email format
   - Gender (`male` / `female`)
   - Birth date (`YYYY-MM-DD`, valid range)
-- Safe JSON writes using temporary-file replace
+- SQLite database storage (`app.db`)
+- Automatic one-time import from legacy JSON files (`users.json`, `profiles.json`)
 - Basic automated tests
 
 ## Project Structure
@@ -21,8 +22,9 @@ A simple, secure command-line login and profile management application built wit
 ```text
 .
 |- login_cli_bg.py              # Main application
-|- users.json                   # Credential storage (hashed)
-|- profiles.json                # Profile storage
+|- app.db                       # SQLite database (users + profiles)
+|- users.json                   # Optional legacy import source
+|- profiles.json                # Optional legacy import source
 |- tests/
 |  |- test_login_cli_bg.py      # Unit tests
 |- pytest.ini                   # Pytest configuration
@@ -58,12 +60,14 @@ python -m pytest -v
 
 ## How Data Is Stored
 
-- `users.json` stores:
+- `app.db` contains:
+  - `users` table:
   - `salt` (hex)
   - `password_hash` (hex)
   - `iterations` (PBKDF2 rounds)
-- `profiles.json` stores:
+  - `profiles` table:
   - `email`, `country`, `city`, `gender`, `birth_date`
+- Legacy `users.json` / `profiles.json` are auto-imported once if the database is empty.
 
 ## Security Notes
 
@@ -74,8 +78,7 @@ python -m pytest -v
 
 ## Known Limitations
 
-- Data is file-based JSON (not a database).
-- No multi-user locking for concurrent writes.
+- Single local SQLite file (not a remote multi-user server).
 - Interactive CLI is focused on Windows terminal behavior.
 
 ## License

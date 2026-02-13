@@ -13,3 +13,8 @@ venv/
 # Local temp and backup artifacts
 .tmp/
 *.bak.json
+
+# SQLite database files
+app.db
+app.db-wal
+app.db-shm

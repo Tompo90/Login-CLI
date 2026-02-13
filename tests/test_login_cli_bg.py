@@ -265,6 +265,7 @@ class AuthFlowTests(unittest.TestCase):
         unique = uuid.uuid4().hex
         users_file = Path(f"users.invalid.{unique}.json")
         profiles_file = Path(f"profiles.invalid.{unique}.json")
+        db_file = Path(f"app.invalid.{unique}.db")
 
         try:
             users_file.write_text("{invalid-json", encoding="utf-8")
@@ -272,11 +273,18 @@ class AuthFlowTests(unittest.TestCase):
 
             with patch.object(app, "USERS_FILE", users_file), patch.object(
                 app, "PROFILES_FILE", profiles_file
+            ), patch.object(
+                app, "DB_FILE", db_file
             ), patch("builtins.print") as print_mock:
                 app.main()
         finally:
             users_file.unlink(missing_ok=True)
             profiles_file.unlink(missing_ok=True)
+            for path in (db_file, Path(f"{db_file}-wal"), Path(f"{db_file}-shm")):
+                try:
+                    path.unlink(missing_ok=True)
+                except PermissionError:
+                    pass
 
         self.assertTrue(any("Startup error:" in call.args[0] for call in print_mock.call_args_list))
 

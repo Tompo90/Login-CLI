@@ -6,9 +6,9 @@ import hmac
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
-import uuid
 from pathlib import Path
 
 try:
@@ -18,6 +18,7 @@ except ImportError:
 
 USERS_FILE = Path(__file__).parent / "users.json"
 PROFILES_FILE = Path(__file__).parent / "profiles.json"
+DB_FILE = Path(__file__).parent / "app.db"
 DEFAULT_ITERATIONS = 310_000
 LEGACY_ITERATIONS = 100_000
 MIN_ITERATIONS = 50_000
@@ -32,7 +33,7 @@ class CancelOperation(Exception):
 
 
 class DataFileError(Exception):
-    """Raised when a required JSON data file is invalid."""
+    """Raised when persistent storage is invalid or unavailable."""
 
 
 def should_cancel(value):
@@ -74,33 +75,182 @@ def load_json(path):
     return data
 
 
-def save_json(path, data):
-    """Save dict data to JSON file."""
-    # Write to a temporary file first to reduce risk of partial/corrupt writes.
-    temp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    with temp_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-    temp_path.replace(path)
+def db_connect():
+    """Open SQLite connection with safe defaults."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+    except sqlite3.Error as error:
+        raise DataFileError(f"Could not open database '{DB_FILE.name}': {error}") from error
+
+
+def init_db():
+    """Create database schema if missing."""
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    salt TEXT,
+                    password_hash TEXT,
+                    iterations INTEGER,
+                    legacy_password TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS profiles (
+                    username TEXT PRIMARY KEY,
+                    email TEXT,
+                    country TEXT,
+                    city TEXT,
+                    gender TEXT,
+                    birth_date TEXT
+                )
+                """
+            )
+            conn.commit()
+    except sqlite3.Error as error:
+        raise DataFileError(f"Could not initialize database '{DB_FILE.name}': {error}") from error
+
+
+def maybe_migrate_json_data():
+    """Import legacy JSON files once when the database is empty."""
+    try:
+        with db_connect() as conn:
+            user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            profile_count = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
+    except sqlite3.Error as error:
+        raise DataFileError(f"Could not read database '{DB_FILE.name}': {error}") from error
+
+    if user_count or profile_count:
+        return
+
+    users = load_json(USERS_FILE)
+    profiles = load_json(PROFILES_FILE)
+    if not users and not profiles:
+        return
+
+    save_users(users)
+    save_profiles(profiles)
 
 
 def load_users():
-    """Load credential records."""
-    return load_json(USERS_FILE)
+    """Load credential records from SQLite."""
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                "SELECT username, salt, password_hash, iterations, legacy_password FROM users"
+            ).fetchall()
+    except sqlite3.Error as error:
+        raise DataFileError(f"Could not load users from '{DB_FILE.name}': {error}") from error
+
+    users = {}
+    for username, salt, password_hash, iterations, legacy_password in rows:
+        if salt is not None and password_hash is not None:
+            record = {"salt": salt, "password_hash": password_hash}
+            if iterations is not None:
+                record["iterations"] = iterations
+            users[username] = record
+        elif legacy_password is not None:
+            users[username] = {"password": legacy_password}
+        else:
+            users[username] = {}
+    return users
 
 
 def save_users(users):
-    """Save credential records."""
-    save_json(USERS_FILE, users)
+    """Save credential records to SQLite."""
+    if not isinstance(users, dict):
+        raise OSError("Could not save users: invalid data format.")
+
+    rows = []
+    for username, user_record in users.items():
+        if not isinstance(user_record, dict):
+            raise OSError("Could not save users: invalid account record.")
+        rows.append(
+            (
+                username,
+                user_record.get("salt"),
+                user_record.get("password_hash"),
+                user_record.get("iterations"),
+                user_record.get("password"),
+            )
+        )
+
+    try:
+        with db_connect() as conn:
+            conn.execute("DELETE FROM users")
+            conn.executemany(
+                """
+                INSERT INTO users (username, salt, password_hash, iterations, legacy_password)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+    except sqlite3.Error as error:
+        raise OSError(f"Could not save users to '{DB_FILE.name}': {error}") from error
 
 
 def load_profiles():
-    """Load user profile records."""
-    return load_json(PROFILES_FILE)
+    """Load user profile records from SQLite."""
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                "SELECT username, email, country, city, gender, birth_date FROM profiles"
+            ).fetchall()
+    except sqlite3.Error as error:
+        raise DataFileError(f"Could not load profiles from '{DB_FILE.name}': {error}") from error
+
+    return {
+        username: {
+            "email": email,
+            "country": country,
+            "city": city,
+            "gender": gender,
+            "birth_date": birth_date,
+        }
+        for username, email, country, city, gender, birth_date in rows
+    }
 
 
 def save_profiles(profiles):
-    """Save user profile records."""
-    save_json(PROFILES_FILE, profiles)
+    """Save user profile records to SQLite."""
+    if not isinstance(profiles, dict):
+        raise OSError("Could not save profiles: invalid data format.")
+
+    rows = []
+    for username, profile in profiles.items():
+        if not isinstance(profile, dict):
+            raise OSError("Could not save profiles: invalid profile record.")
+        rows.append(
+            (
+                username,
+                profile.get("email"),
+                profile.get("country"),
+                profile.get("city"),
+                profile.get("gender"),
+                profile.get("birth_date"),
+            )
+        )
+
+    try:
+        with db_connect() as conn:
+            conn.execute("DELETE FROM profiles")
+            conn.executemany(
+                """
+                INSERT INTO profiles (username, email, country, city, gender, birth_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+    except sqlite3.Error as error:
+        raise OSError(f"Could not save profiles to '{DB_FILE.name}': {error}") from error
 
 
 def hash_password(password, iterations=DEFAULT_ITERATIONS):
@@ -528,11 +678,13 @@ def user_session_menu(username, profiles):
 def main():
     configure_console()
     try:
+        init_db()
+        maybe_migrate_json_data()
         users = load_users()
         profiles = load_profiles()
     except DataFileError as error:
         print(f"Startup error: {error}")
-        print("Fix the data file or restore from backup before continuing.")
+        print("Fix the database/data files or restore from backup before continuing.")
         return
 
     print("Tip: type 'exit' (or 'quit'/'q') at text prompts to cancel.")
