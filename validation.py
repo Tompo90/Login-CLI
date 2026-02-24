@@ -3,7 +3,7 @@ import re
 
 
 def normalize_username(username):
-    """Normalize username for case-insensitive comparisons."""
+    """Normalize username for ccoase-insensitive comparisons."""
     return username.strip().casefold()
 
 
