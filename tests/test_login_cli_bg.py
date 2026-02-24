@@ -53,6 +53,27 @@ class PasswordTests(unittest.TestCase):
             )
         )
 
+    def test_read_password_uses_posix_masking_when_available(self):
+        fake_stdin = type("FakeStdin", (), {"isatty": lambda self: True})()
+        with patch.object(app, "msvcrt", None), patch.object(
+            app.sys, "stdin", fake_stdin
+        ), patch.object(app, "read_password_posix", return_value="MaskedPass1!") as posix_mock:
+            value = app.read_password("Password: ")
+
+        self.assertEqual(value, "MaskedPass1!")
+        posix_mock.assert_called_once_with("Password: ")
+
+    def test_read_password_falls_back_to_getpass_when_posix_unavailable(self):
+        fake_stdin = type("FakeStdin", (), {"isatty": lambda self: True})()
+        with patch.object(app, "msvcrt", None), patch.object(
+            app.sys, "stdin", fake_stdin
+        ), patch.object(app, "read_password_posix", return_value=None), patch(
+            "getpass.getpass", return_value="FallbackPass1!"
+        ):
+            value = app.read_password("Password: ")
+
+        self.assertEqual(value, "FallbackPass1!")
+
 
 class AuthFlowTests(unittest.TestCase):
     def test_authenticate_user_accepts_legacy_record_without_iterations(self):

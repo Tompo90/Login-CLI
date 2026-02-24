@@ -13,6 +13,13 @@ try:
 except ImportError:
     msvcrt = None
 
+try:
+    import termios
+    import tty
+except ImportError:
+    termios = None
+    tty = None
+
 USERS_FILE = Path(__file__).parent / "users.json"
 PROFILES_FILE = Path(__file__).parent / "profiles.json"
 DB_FILE = Path(__file__).parent / "app.db"
@@ -185,8 +192,15 @@ def find_existing_username(users, entered_username):
 
 def read_password(prompt):
     """Read password and show '*' for typed characters."""
-    if msvcrt is None or not sys.stdin.isatty():
+    if not sys.stdin.isatty():
         # Fallback to getpass so password input is not echoed.
+        value = getpass.getpass(prompt)
+        return value
+
+    if msvcrt is None:
+        value = read_password_posix(prompt)
+        if value is not None:
+            return value
         value = getpass.getpass(prompt)
         return value
 
@@ -215,6 +229,45 @@ def read_password(prompt):
 
         chars.append(key)
         print("*", end="", flush=True)
+
+    return "".join(chars)
+
+
+def read_password_posix(prompt):
+    """Read password in POSIX terminals and show '*' per character."""
+    if termios is None or tty is None:
+        return None
+
+    try:
+        fileno = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fileno)
+    except (termios.error, ValueError, OSError):
+        return None
+
+    print(prompt, end="", flush=True)
+    chars = []
+    try:
+        tty.setraw(fileno)
+        while True:
+            key = sys.stdin.read(1)
+
+            if key in ("\r", "\n"):
+                print()
+                break
+
+            if key == "\x03":
+                raise KeyboardInterrupt
+
+            if key in ("\x7f", "\b"):
+                if chars:
+                    chars.pop()
+                    print("\b \b", end="", flush=True)
+                continue
+
+            chars.append(key)
+            print("*", end="", flush=True)
+    finally:
+        termios.tcsetattr(fileno, termios.TCSADRAIN, old_settings)
 
     return "".join(chars)
 
